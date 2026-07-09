@@ -65,6 +65,7 @@ pub struct ToolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolOutput;
     use async_trait::async_trait;
 
     struct EchoTool;

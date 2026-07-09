@@ -145,8 +145,7 @@ mod tests {
         let mut config = AgentConfig::default();
         config.max_iterations = 1;
         let mut agent = Agent::new("test".into(), config);
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(crate::executor::tests::EchoTool));
+        let registry = ToolRegistry::new();
         let _ = AgentExecutor::run(&mut agent, "use echo", &registry).await;
     }
 }
