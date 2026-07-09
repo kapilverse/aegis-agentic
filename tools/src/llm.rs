@@ -12,8 +12,8 @@ pub struct LlmTool {
 
 #[derive(Serialize, Clone)]
 pub struct ChatMessage {
-    role: String,
-    content: String,
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(Serialize)]
