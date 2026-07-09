@@ -1,0 +1,77 @@
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler
+  namespace: default
+  labels:
+    app: scheduler
+spec:
+  clusterIP: None
+  selector:
+    app: scheduler
+  ports:
+    - name: rpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  publishNotReadyAddresses: true
+
+---
+# Load balancer service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler-lb
+  namespace: default
+  labels:
+    app: scheduler
+spec:
+  type: LoadBalancer
+  selector:
+    app: scheduler
+  ports:
+    - name: rpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+
+---
+# Service for metrics scraping
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler-metrics
+  namespace: default
+  labels:
+    app: scheduler
+spec:
+  type: ClusterIP
+  selector:
+    app: scheduler
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP

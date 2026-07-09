@@ -1,0 +1,209 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: aegis-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-aegis_gateway}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: aegis-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@aegis.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aegis-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aegis-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: aegis-gateway
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/aegis_gateway
+      RUST_LOG: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aegis-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    container_name: aegis-scheduler
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/aegis_gateway
+      RUST_LOG: info
+    ports:
+      - "50051:50051"
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aegis-network
+    restart: unless-stopped
+
+  # Optional: ollama for lightweight Go-based inference
+  # Commented out - using HuggingFace API instead
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: aegis-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   environment:
+  #     OLLAMA_MODELS: /root/.ollama/models
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   networks:
+  #     - aegis-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # Optional: vLLM for large models (requires NVIDIA GPU)
+  # Uncomment to enable - ensure you have GPU support and ~16GB VRAM
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: aegis-vllm
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     MODEL_NAME: meta-llama/Llama-2-7b-hf
+  #     CUDA_VISIBLE_DEVICES: "0"
+  #   volumes:
+  #     - hf_cache:/root/.cache/huggingface
+  #   networks:
+  #     - aegis-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+  # Optional: llama.cpp for lightweight CPU inference
+  # Uncomment to enable - no GPU required, good for smaller models
+  # llamacpp:
+  #   image: ghcr.io/ggerganov/llama.cpp:latest
+  #   container_name: aegis-llamacpp
+  #   ports:
+  #     - "8001:8001"
+  #   command: ["-m", "/models/tinyllama.gguf", "-c", "512", "--port", "8001", "-ngl", "0"]
+  #   volumes:
+  #     - llama_models:/models
+  #   networks:
+  #     - aegis-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+
+# gateway:
+#   image: ghcr.io/yadavkapil23/aegis-gateway:v2.0.0
+  
+# scheduler:
+#   image: ghcr.io/yadavkapil23/aegis-scheduler:v2.0.0
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  ollama_data:
+  hf_cache:
+  llama_models:
+
+networks:
+  aegis-network:
+    driver: bridge
