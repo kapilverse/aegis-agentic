@@ -1,5 +1,4 @@
 use crate::types::MemoryEntry;
-use chrono::Utc;
 
 pub struct ShortTermMemory {
     entries: Vec<MemoryEntry>,

@@ -17,3 +17,9 @@ pub enum AgentError {
     #[error("LLM error: {0}")]
     LlmError(String),
 }
+
+impl From<String> for AgentError {
+    fn from(s: String) -> Self {
+        AgentError::InvalidTransition(s)
+    }
+}
