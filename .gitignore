@@ -1,4 +1,4 @@
 Cargo.lock
 target/
 test_client.py
-.env
+.envPIVOT_PLAN.md

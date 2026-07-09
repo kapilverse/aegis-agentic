@@ -1,0 +1,52 @@
+[package]
+name = "aegis-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+actix-rt = "2"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+dashmap.workspace = true
+
+# Security & Authentication
+jsonwebtoken = "9"
+base64 = "0.22"
+chrono.workspace = true
+
+# Metrics & Observability
+prometheus.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+tracing-opentelemetry = "0.21"
+
+# Futures & Async
+futures-util = "0.3"
+
+# HTTP Client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono", "json"] }
+
+# AEGIS crates
+aegis-agent = { path = "../agent" }
+aegis-tools = { path = "../tools" }
+aegis-memory = { path = "../memory" }
+aegis-session = { path = "../session" }
+aegis-audit = { path = "../audit" }
+
+[[bin]]
+name = "aegis-api"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
