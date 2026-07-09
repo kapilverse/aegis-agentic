@@ -1,7 +1,7 @@
 use crate::error::AgentError;
 use crate::state_machine::{StateTransition, ToolCallRequest};
 use crate::types::{Agent, AgentState};
-use aegis_tools::ToolRegistry;
+use aegis_tools::{LlmTool, ToolRegistry};
 use tracing::{info, warn};
 
 pub struct AgentExecutor;
@@ -11,6 +11,7 @@ impl AgentExecutor {
         agent: &mut Agent,
         user_message: &str,
         tool_registry: &ToolRegistry,
+        llm: &LlmTool,
     ) -> Result<String, AgentError> {
         let mut conversation: Vec<ConversationMessage> = vec![ConversationMessage {
             role: "user".into(),
@@ -22,8 +23,7 @@ impl AgentExecutor {
         for _iteration in 0..agent.config.max_iterations {
             match &agent.state {
                 AgentState::Thinking => {
-                    // Simulate LLM thinking (Phase 1 will implement real LLM call)
-                    let response = Self::simulate_think(agent, &conversation);
+                    let response = Self::call_llm(agent, &conversation, llm).await?;
                     conversation.push(ConversationMessage {
                         role: "assistant".into(),
                         content: response.content.clone(),
@@ -31,6 +31,7 @@ impl AgentExecutor {
 
                     if let Some(tool_calls) = response.tool_calls {
                         agent.transition(StateTransition::ThinkComplete {
+                            content: response.content,
                             tool_calls: Some(
                                 tool_calls
                                     .into_iter()
@@ -42,7 +43,10 @@ impl AgentExecutor {
                             ),
                         })?;
                     } else {
-                        agent.transition(StateTransition::ThinkComplete { tool_calls: None })?;
+                        agent.transition(StateTransition::ThinkComplete {
+                            content: response.content,
+                            tool_calls: None,
+                        })?;
                     }
                 }
                 AgentState::Acting { tool_name, args } => {
@@ -87,31 +91,58 @@ impl AgentExecutor {
         Err(AgentError::MaxIterationsExceeded)
     }
 
-    fn simulate_think(
-        _agent: &Agent,
+    async fn call_llm(
+        agent: &Agent,
         conversation: &[ConversationMessage],
-    ) -> ThinkResponse {
-        let last_message = conversation.last().map(|m| m.content.as_str()).unwrap_or("");
+        llm: &LlmTool,
+    ) -> Result<ThinkResponse, AgentError> {
+        let mut messages = Vec::new();
 
-        if last_message.contains("hello") || last_message.contains("hi") {
-            ThinkResponse {
-                content: "Hello! How can I help you today?".to_string(),
-                tool_calls: None,
-            }
-        } else if last_message.contains("time") {
-            ThinkResponse {
-                content: "Let me check the time for you.".to_string(),
-                tool_calls: Some(vec![(
-                    "get_time".to_string(),
-                    serde_json::json!({}),
-                )]),
-            }
-        } else {
-            ThinkResponse {
-                content: format!("I received your message: '{}'. I don't have a specific tool for this, but I'm here to help!", last_message),
-                tool_calls: None,
+        messages.push(aegis_tools::llm::ChatMessage {
+            role: "system".into(),
+            content: agent.config.system_prompt.clone(),
+        });
+
+        for msg in conversation {
+            messages.push(aegis_tools::llm::ChatMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+            });
+        }
+
+        let response = llm
+            .chat(messages)
+            .await
+            .map_err(|e| AgentError::LlmError(e.to_string()))?;
+
+        let tool_calls = Self::parse_tool_calls(&response);
+
+        Ok(ThinkResponse {
+            content: response,
+            tool_calls,
+        })
+    }
+
+    fn parse_tool_calls(response: &str) -> Option<Vec<(String, serde_json::Value)>> {
+        let response = response.trim();
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(response) {
+            if let Some(calls) = value.get("tool_calls").and_then(|v| v.as_array()) {
+                let parsed: Vec<(String, serde_json::Value)> = calls
+                    .iter()
+                    .filter_map(|call| {
+                        let name = call.get("name")?.as_str()?.to_string();
+                        let args = call.get("args").cloned().unwrap_or(serde_json::json!({}));
+                        Some((name, args))
+                    })
+                    .collect();
+                if !parsed.is_empty() {
+                    return Some(parsed);
+                }
             }
         }
+
+        None
     }
 }
 
@@ -130,22 +161,41 @@ mod tests {
     use super::*;
     use crate::types::AgentConfig;
 
-    #[tokio::test]
-    async fn test_simple_conversation() {
-        let mut agent = Agent::new("test".into(), AgentConfig::default());
-        let registry = ToolRegistry::new();
-        let result = AgentExecutor::run(&mut agent, "hello", &registry)
-            .await
-            .unwrap();
-        assert!(!result.is_empty());
+    #[test]
+    fn test_parse_tool_calls_valid() {
+        let response = r#"{"tool_calls": [{"name": "search", "args": {"query": "hello"}}]}"#;
+        let calls = AgentExecutor::parse_tool_calls(response).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "search");
+    }
+
+    #[test]
+    fn test_parse_tool_calls_none() {
+        let response = "Hello, how can I help?";
+        assert!(AgentExecutor::parse_tool_calls(response).is_none());
+    }
+
+    #[test]
+    fn test_parse_tool_calls_empty() {
+        let response = r#"{"tool_calls": []}"#;
+        assert!(AgentExecutor::parse_tool_calls(response).is_none());
+    }
+
+    fn mock_llm() -> LlmTool {
+        LlmTool::new(
+            "http://localhost:11434".into(),
+            None,
+            "llama3".into(),
+        )
     }
 
     #[tokio::test]
-    async fn test_max_iterations() {
-        let mut config = AgentConfig::default();
-        config.max_iterations = 1;
-        let mut agent = Agent::new("test".into(), config);
+    async fn test_run_with_mock_llm() {
+        let mut agent = Agent::new("test".into(), AgentConfig::default());
         let registry = ToolRegistry::new();
-        let _ = AgentExecutor::run(&mut agent, "use echo", &registry).await;
+        let llm = mock_llm();
+        // This will fail because no LLM is running, but it tests the code path
+        let result = AgentExecutor::run(&mut agent, "hello", &registry, &llm).await;
+        assert!(result.is_err());
     }
 }

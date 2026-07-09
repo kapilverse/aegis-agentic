@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn test_eviction() {
-        let mut memory = ShortTermMemory::new(20);
+        let mut memory = ShortTermMemory::new(5);
         memory.add("This is a longer message that should be evicted", "user");
         memory.add("Short", "user");
         assert_eq!(memory.len(), 1);

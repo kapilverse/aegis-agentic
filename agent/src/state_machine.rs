@@ -4,6 +4,7 @@ use crate::types::{Agent, AgentState};
 pub enum StateTransition {
     Start,
     ThinkComplete {
+        content: String,
         tool_calls: Option<Vec<ToolCallRequest>>,
     },
     ActComplete {
@@ -29,7 +30,7 @@ impl Agent {
                 }
                 _ => return Err(format!("Cannot start from state {:?}", old_state)),
             },
-            StateTransition::ThinkComplete { tool_calls } => match &self.state {
+            StateTransition::ThinkComplete { content, tool_calls } => match &self.state {
                 AgentState::Thinking => {
                     if let Some(calls) = tool_calls {
                         if let Some(first) = calls.into_iter().next() {
@@ -38,14 +39,10 @@ impl Agent {
                                 args: first.args,
                             };
                         } else {
-                            self.state = AgentState::Done {
-                                output: String::new(),
-                            };
+                            self.state = AgentState::Done { output: content };
                         }
                     } else {
-                        self.state = AgentState::Done {
-                            output: String::new(),
-                        };
+                        self.state = AgentState::Done { output: content };
                     }
                 }
                 _ => return Err(format!("Cannot complete thinking from state {:?}", old_state)),
@@ -90,6 +87,7 @@ mod tests {
         agent.transition(StateTransition::Start).unwrap();
         agent
             .transition(StateTransition::ThinkComplete {
+                content: "test".into(),
                 tool_calls: Some(vec![ToolCallRequest {
                     tool_name: "test_tool".into(),
                     args: serde_json::json!({}),
@@ -104,7 +102,10 @@ mod tests {
         let mut agent = Agent::new("test".into(), AgentConfig::default());
         agent.transition(StateTransition::Start).unwrap();
         agent
-            .transition(StateTransition::ThinkComplete { tool_calls: None })
+            .transition(StateTransition::ThinkComplete {
+                content: "done".into(),
+                tool_calls: None,
+            })
             .unwrap();
         assert!(matches!(agent.state, AgentState::Done { .. }));
     }
@@ -112,6 +113,7 @@ mod tests {
     #[test]
     fn test_invalid_transition() {
         let mut agent = Agent::new("test".into(), AgentConfig::default());
+        agent.transition(StateTransition::Start).unwrap();
         assert!(agent.transition(StateTransition::Start).is_err());
     }
 }
